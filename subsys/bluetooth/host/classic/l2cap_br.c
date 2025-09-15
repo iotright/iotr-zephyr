@@ -652,7 +652,12 @@ static int bt_l2cap_br_update_req_seq_direct(struct bt_l2cap_br_chan *br_chan, u
 
 	if (!atomic_test_bit(br_chan->flags, L2CAP_FLAG_RECV_FRAME_R)) {
 		if (bt_l2cap_br_get_outstanding_count(br_chan)) {
-			l2cap_br_start_timer(br_chan, BT_L2CAP_BR_TIMER_RET, true);
+			/*
+			 * If unacknowledged I-frames have been sent but the retransmission
+			 * timer has not elapsed, then the ongoing retransmission timer should
+			 * not be restarted.
+			 */
+			l2cap_br_start_timer(br_chan, BT_L2CAP_BR_TIMER_RET, false);
 		} else {
 			l2cap_br_start_timer(br_chan, BT_L2CAP_BR_TIMER_MONITOR, false);
 		}
@@ -1600,7 +1605,23 @@ struct net_buf *l2cap_br_data_pull(struct bt_conn *conn, size_t amount, size_t *
 
 #if defined(CONFIG_BT_L2CAP_RET_FC)
 	if (br_chan->tx.mode != BT_L2CAP_BR_LINK_MODE_BASIC) {
-		return l2cap_br_ret_fc_data_pull(conn, amount, length);
+		struct net_buf *buf;
+		const sys_snode_t *next_pdu_ready;
+
+		buf = l2cap_br_ret_fc_data_pull(conn, amount, length);
+
+		/* When the returned buffer is a `NULL`, it means there is not any data needs to
+		 * be sent. However maybe there is any frame pending on other L2CAP channel needs
+		 * to be sent over the same ACL connection. Re-trigger the TX processor. It will
+		 * call the function `l2cap_br_data_pull()` again and the pending buffer will be
+		 * pulled from following L2CAP.
+		 */
+		next_pdu_ready = sys_slist_peek_head(&conn->l2cap_data_ready);
+		if ((buf == NULL) && (next_pdu_ready != NULL) && (next_pdu_ready != pdu_ready)) {
+			bt_tx_irq_raise();
+		}
+
+		return buf;
 	}
 #endif /* CONFIG_BT_L2CAP_RET_FC */
 
@@ -4032,6 +4053,14 @@ static uint16_t l2cap_br_conf_opt_ret_fc(struct bt_l2cap_chan *chan, struct net_
 
 		if (opt_ret_fc->tx_windows_size > CONFIG_BT_L2CAP_MAX_WINDOW_SIZE) {
 			opt_ret_fc->tx_windows_size = CONFIG_BT_L2CAP_MAX_WINDOW_SIZE;
+		}
+
+		if (monitor_timeout == 0) {
+			monitor_timeout = CONFIG_BT_L2CAP_BR_MONITOR_TIMEOUT;
+		}
+
+		if (retransmission_timeout == 0) {
+			retransmission_timeout = CONFIG_BT_L2CAP_BR_RET_TIMEOUT;
 		}
 
 		opt_ret_fc->retransmission_timeout = sys_cpu_to_le16(retransmission_timeout);

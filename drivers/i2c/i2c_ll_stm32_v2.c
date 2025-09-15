@@ -14,6 +14,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
 #include <soc.h>
+#include <stm32_cache.h>
 #include <stm32_ll_i2c.h>
 #include <errno.h>
 #include <zephyr/drivers/i2c.h>
@@ -439,11 +440,13 @@ int i2c_stm32_target_register(const struct device *dev,
 	/* Mark device as active */
 	(void)pm_device_runtime_get(dev);
 
+#if !defined(CONFIG_SOC_SERIES_STM32F7X)
 	if (pm_device_wakeup_is_capable(dev)) {
 		/* Enable wake-up from stop */
 		LOG_DBG("i2c: enabling wakeup from stop");
 		LL_I2C_EnableWakeUpFromStop(cfg->i2c);
 	}
+#endif /* CONFIG_SOC_SERIES_STM32F7X */
 
 	LL_I2C_Enable(i2c);
 
@@ -526,11 +529,13 @@ int i2c_stm32_target_unregister(const struct device *dev,
 		LL_I2C_Disable(i2c);
 	}
 
+#if !defined(CONFIG_SOC_SERIES_STM32F7X)
 	if (pm_device_wakeup_is_capable(dev)) {
 		/* Disable wake-up from STOP */
 		LOG_DBG("i2c: disabling wakeup from stop");
 		LL_I2C_DisableWakeUpFromStop(i2c);
 	}
+#endif /* CONFIG_SOC_SERIES_STM32F7X */
 
 	/* Release the device */
 	(void)pm_device_runtime_put(dev);
@@ -539,7 +544,6 @@ int i2c_stm32_target_unregister(const struct device *dev,
 
 	return 0;
 }
-
 #endif /* defined(CONFIG_I2C_TARGET) */
 
 void i2c_stm32_event(const struct device *dev)
